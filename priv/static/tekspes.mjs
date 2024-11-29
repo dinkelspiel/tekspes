@@ -2504,6 +2504,7 @@ var List = class {
     }
     return desired === 0;
   }
+  // @internal
   countLength() {
     let length3 = 0;
     for (let _ of this)
@@ -2541,6 +2542,95 @@ var NonEmpty = class extends List {
     this.tail = tail;
   }
 };
+var BitArray = class _BitArray {
+  constructor(buffer) {
+    if (!(buffer instanceof Uint8Array)) {
+      throw "BitArray can only be constructed from a Uint8Array";
+    }
+    this.buffer = buffer;
+  }
+  // @internal
+  get length() {
+    return this.buffer.length;
+  }
+  // @internal
+  byteAt(index2) {
+    return this.buffer[index2];
+  }
+  // @internal
+  floatFromSlice(start3, end, isBigEndian) {
+    return byteArrayToFloat(this.buffer, start3, end, isBigEndian);
+  }
+  // @internal
+  intFromSlice(start3, end, isBigEndian, isSigned) {
+    return byteArrayToInt(this.buffer, start3, end, isBigEndian, isSigned);
+  }
+  // @internal
+  binaryFromSlice(start3, end) {
+    return new _BitArray(this.buffer.slice(start3, end));
+  }
+  // @internal
+  sliceAfter(index2) {
+    return new _BitArray(this.buffer.slice(index2));
+  }
+};
+var UtfCodepoint = class {
+  constructor(value) {
+    this.value = value;
+  }
+};
+function byteArrayToInt(byteArray, start3, end, isBigEndian, isSigned) {
+  const byteSize = end - start3;
+  if (byteSize <= 6) {
+    let value = 0;
+    if (isBigEndian) {
+      for (let i = start3; i < end; i++) {
+        value = value * 256 + byteArray[i];
+      }
+    } else {
+      for (let i = end - 1; i >= start3; i--) {
+        value = value * 256 + byteArray[i];
+      }
+    }
+    if (isSigned) {
+      const highBit = 2 ** (byteSize * 8 - 1);
+      if (value >= highBit) {
+        value -= highBit * 2;
+      }
+    }
+    return value;
+  } else {
+    let value = 0n;
+    if (isBigEndian) {
+      for (let i = start3; i < end; i++) {
+        value = (value << 8n) + BigInt(byteArray[i]);
+      }
+    } else {
+      for (let i = end - 1; i >= start3; i--) {
+        value = (value << 8n) + BigInt(byteArray[i]);
+      }
+    }
+    if (isSigned) {
+      const highBit = 1n << BigInt(byteSize * 8 - 1);
+      if (value >= highBit) {
+        value -= highBit * 2n;
+      }
+    }
+    return Number(value);
+  }
+}
+function byteArrayToFloat(byteArray, start3, end, isBigEndian) {
+  const view2 = new DataView(byteArray.buffer);
+  const byteSize = end - start3;
+  if (byteSize === 8) {
+    return view2.getFloat64(start3, !isBigEndian);
+  } else if (byteSize === 4) {
+    return view2.getFloat32(start3, !isBigEndian);
+  } else {
+    const msg = `Sized floats must be 32-bit or 64-bit on JavaScript, got size of ${byteSize * 8} bits`;
+    throw new globalThis.Error(msg);
+  }
+}
 var Result = class _Result extends CustomType {
   // @internal
   static isResult(data) {
@@ -2652,6 +2742,7 @@ function makeError(variant, module, line, fn, message, extra) {
   error.gleam_error = variant;
   error.module = module;
   error.line = line;
+  error.function = fn;
   error.fn = fn;
   for (let k in extra)
     error[k] = extra[k];
@@ -2682,9 +2773,6 @@ function round2(x) {
 }
 
 // build/dev/javascript/gleam_stdlib/gleam/int.mjs
-function parse(string3) {
-  return parse_int(string3);
-}
 function to_string2(x) {
   return to_string(x);
 }
@@ -2709,6 +2797,25 @@ function do_reverse(loop$remaining, loop$accumulator) {
 }
 function reverse(xs) {
   return do_reverse(xs, toList([]));
+}
+function do_map(loop$list, loop$fun, loop$acc) {
+  while (true) {
+    let list = loop$list;
+    let fun = loop$fun;
+    let acc = loop$acc;
+    if (list.hasLength(0)) {
+      return reverse(acc);
+    } else {
+      let x = list.head;
+      let xs = list.tail;
+      loop$list = xs;
+      loop$fun = fun;
+      loop$acc = prepend(fun(x), acc);
+    }
+  }
+}
+function map(list, fun) {
+  return do_map(list, fun, toList([]));
 }
 function drop(loop$list, loop$n) {
   while (true) {
@@ -2859,6 +2966,10 @@ function drop_left(string3, num_graphemes) {
   } else {
     return slice(string3, num_graphemes, length2(string3) - num_graphemes);
   }
+}
+function inspect2(term) {
+  let _pipe = inspect(term);
+  return to_string3(_pipe);
 }
 
 // build/dev/javascript/gleam_stdlib/dict.mjs
@@ -3564,13 +3675,6 @@ var NOT_FOUND = {};
 function identity(x) {
   return x;
 }
-function parse_int(value) {
-  if (/^[-+]?(\d+)$/.test(value)) {
-    return new Ok(parseInt(value));
-  } else {
-    return new Error(Nil);
-  }
-}
 function to_string(term) {
   return term.toString();
 }
@@ -3631,6 +3735,15 @@ var unicode_whitespaces = [
 ].join("");
 var left_trim_regex = new RegExp(`^([${unicode_whitespaces}]*)`, "g");
 var right_trim_regex = new RegExp(`([${unicode_whitespaces}]*)$`, "g");
+function print_debug(string3) {
+  if (typeof process === "object" && process.stderr?.write) {
+    process.stderr.write(string3 + "\n");
+  } else if (typeof Deno === "object") {
+    Deno.stderr.writeSync(new TextEncoder().encode(string3 + "\n"));
+  } else {
+    console.log(string3);
+  }
+}
 function floor(float3) {
   return Math.floor(float3);
 }
@@ -3655,6 +3768,117 @@ function map_get(map4, key) {
 }
 function map_insert(key, value, map4) {
   return map4.set(key, value);
+}
+function inspect(v) {
+  const t = typeof v;
+  if (v === true)
+    return "True";
+  if (v === false)
+    return "False";
+  if (v === null)
+    return "//js(null)";
+  if (v === void 0)
+    return "Nil";
+  if (t === "string")
+    return inspectString(v);
+  if (t === "bigint" || t === "number")
+    return v.toString();
+  if (Array.isArray(v))
+    return `#(${v.map(inspect).join(", ")})`;
+  if (v instanceof List)
+    return inspectList(v);
+  if (v instanceof UtfCodepoint)
+    return inspectUtfCodepoint(v);
+  if (v instanceof BitArray)
+    return inspectBitArray(v);
+  if (v instanceof CustomType)
+    return inspectCustomType(v);
+  if (v instanceof Dict)
+    return inspectDict(v);
+  if (v instanceof Set)
+    return `//js(Set(${[...v].map(inspect).join(", ")}))`;
+  if (v instanceof RegExp)
+    return `//js(${v})`;
+  if (v instanceof Date)
+    return `//js(Date("${v.toISOString()}"))`;
+  if (v instanceof Function) {
+    const args = [];
+    for (const i of Array(v.length).keys())
+      args.push(String.fromCharCode(i + 97));
+    return `//fn(${args.join(", ")}) { ... }`;
+  }
+  return inspectObject(v);
+}
+function inspectString(str) {
+  let new_str = '"';
+  for (let i = 0; i < str.length; i++) {
+    let char = str[i];
+    switch (char) {
+      case "\n":
+        new_str += "\\n";
+        break;
+      case "\r":
+        new_str += "\\r";
+        break;
+      case "	":
+        new_str += "\\t";
+        break;
+      case "\f":
+        new_str += "\\f";
+        break;
+      case "\\":
+        new_str += "\\\\";
+        break;
+      case '"':
+        new_str += '\\"';
+        break;
+      default:
+        if (char < " " || char > "~" && char < "\xA0") {
+          new_str += "\\u{" + char.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0") + "}";
+        } else {
+          new_str += char;
+        }
+    }
+  }
+  new_str += '"';
+  return new_str;
+}
+function inspectDict(map4) {
+  let body = "dict.from_list([";
+  let first2 = true;
+  map4.forEach((value, key) => {
+    if (!first2)
+      body = body + ", ";
+    body = body + "#(" + inspect(key) + ", " + inspect(value) + ")";
+    first2 = false;
+  });
+  return body + "])";
+}
+function inspectObject(v) {
+  const name = Object.getPrototypeOf(v)?.constructor?.name || "Object";
+  const props = [];
+  for (const k of Object.keys(v)) {
+    props.push(`${inspect(k)}: ${inspect(v[k])}`);
+  }
+  const body = props.length ? " " + props.join(", ") + " " : "";
+  const head = name === "Object" ? "" : name + " ";
+  return `//js(${head}{${body}})`;
+}
+function inspectCustomType(record) {
+  const props = Object.keys(record).map((label) => {
+    const value = inspect(record[label]);
+    return isNaN(parseInt(label)) ? `${label}: ${value}` : value;
+  }).join(", ");
+  return props ? `${record.constructor.name}(${props})` : record.constructor.name;
+}
+function inspectList(list) {
+  return `[${list.toArray().map(inspect).join(", ")}]`;
+}
+function inspectBitArray(bits) {
+  return `<<${Array.from(bits.buffer).join(", ")}>>`;
+}
+function inspectUtfCodepoint(codepoint2) {
+  return `//utfcodepoint(${String.fromCodePoint(codepoint2.value)})`;
 }
 
 // build/dev/javascript/gleam_stdlib/gleam/dict.mjs
@@ -3721,6 +3945,14 @@ function keys(dict) {
 }
 function delete$(dict, key) {
   return map_remove(key, dict);
+}
+
+// build/dev/javascript/gleam_stdlib/gleam/io.mjs
+function debug(term) {
+  let _pipe = term;
+  let _pipe$1 = inspect2(_pipe);
+  print_debug(_pipe$1);
+  return term;
 }
 
 // build/dev/javascript/gleam_stdlib/gleam/bool.mjs
@@ -4596,11 +4828,418 @@ function div(attrs, children2) {
 function img(attrs) {
   return element("img", attrs, toList([]));
 }
+function button(attrs, children2) {
+  return element("button", attrs, children2);
+}
 
 // build/dev/javascript/lustre/lustre/event.mjs
 function on2(name, handler) {
   return on(name, handler);
 }
+
+// build/dev/javascript/tekspes/astar.mjs
+function do_astar(grid, start3, end) {
+  let col = {};
+  let value = grid;
+  while (value.tail) {
+    col[value.head[0][0] + "," + value.head[0][1]] = value.head[1];
+    value = value.tail;
+  }
+  let g = [];
+  for (var y = 0; y < 28; y++) {
+    g.push([]);
+    for (var x = 0; x < 128; x++) {
+      g[y][x] = col[x + "," + y] === void 0 ? false : col[x + "," + y];
+    }
+  }
+  const graph = new Graph(g);
+  var start3 = graph.grid[0][0];
+  var end = graph.grid[1][2];
+  var result = astar.search(graph, start3, end);
+  var graphDiagonal = new Graph(
+    [
+      [1, 1, 1, 1],
+      [0, 1, 1, 0],
+      [0, 0, 1, 1]
+    ],
+    { diagonal: true }
+  );
+  var start3 = graphDiagonal.grid[0][0];
+  var end = graphDiagonal.grid[1][2];
+  var resultWithDiagonals = astar.search(graphDiagonal, start3, end, {
+    heuristic: astar.heuristics.diagonal
+  });
+  var graphWithWeight = new Graph([
+    [1, 1, 2, 30],
+    [0, 4, 1.3, 0],
+    [0, 0, 5, 1]
+  ]);
+  var startWithWeight = graphWithWeight.grid[0][0];
+  var endWithWeight = graphWithWeight.grid[1][2];
+  var resultWithWeight = astar.search(
+    graphWithWeight,
+    startWithWeight,
+    endWithWeight
+  );
+}
+
+// build/dev/javascript/tekspes/collisions.mjs
+var positions = () => {
+  return toList([
+    [33, 8, true],
+    [32, 8, true],
+    [81, 5, true],
+    [49, 12, true],
+    [116, 4, true],
+    [118, 4, true],
+    [117, 4, true],
+    [119, 4, true],
+    [86, 12, true],
+    [84, 12, true],
+    [46, 26, true],
+    [109, 15, true],
+    [32, 19, true],
+    [58, 8, true],
+    [59, 8, true],
+    [31, 18, true],
+    [76, 11, true],
+    [78, 11, true],
+    [79, 11, true],
+    [77, 11, true],
+    [125, 18, true],
+    [30, 17, true],
+    [42, 6, true],
+    [29, 16, true],
+    [107, 8, true],
+    [104, 8, true],
+    [106, 8, true],
+    [55, 17, true],
+    [64, 22, true],
+    [65, 22, true],
+    [49, 15, true],
+    [26, 8, true],
+    [58, 19, true],
+    [59, 19, true],
+    [39, 7, true],
+    [115, 21, true],
+    [84, 15, true],
+    [87, 15, true],
+    [26, 19, true],
+    [46, 8, true],
+    [47, 8, true],
+    [109, 5, true],
+    [58, 11, true],
+    [59, 11, true],
+    [126, 6, true],
+    [125, 6, true],
+    [127, 6, true],
+    [116, 22, true],
+    [81, 2, true],
+    [53, 22, true],
+    [51, 21, true],
+    [40, 1, true],
+    [41, 1, true],
+    [49, 20, true],
+    [20, 8, true],
+    [82, 8, true],
+    [81, 8, true],
+    [83, 8, true],
+    [105, 11, true],
+    [104, 11, true],
+    [34, 8, true],
+    [35, 8, true],
+    [125, 17, true],
+    [121, 4, true],
+    [123, 4, true],
+    [120, 4, true],
+    [122, 4, true],
+    [36, 20, true],
+    [88, 12, true],
+    [123, 1, true],
+    [15, 8, true],
+    [35, 19, true],
+    [46, 25, true],
+    [60, 8, true],
+    [61, 8, true],
+    [81, 11, true],
+    [80, 11, true],
+    [82, 11, true],
+    [61, 19, true],
+    [60, 19, true],
+    [108, 8, true],
+    [109, 8, true],
+    [78, 6, true],
+    [55, 16, true],
+    [125, 10, true],
+    [65, 21, true],
+    [50, 15, true],
+    [51, 15, true],
+    [39, 3, true],
+    [27, 8, true],
+    [117, 21, true],
+    [114, 20, true],
+    [15, 11, true],
+    [0, 6, true],
+    [48, 8, true],
+    [49, 8, true],
+    [61, 11, true],
+    [60, 11, true],
+    [82, 14, true],
+    [42, 29, true],
+    [43, 29, true],
+    [41, 28, true],
+    [54, 22, true],
+    [55, 22, true],
+    [125, 13, true],
+    [42, 4, true],
+    [52, 21, true],
+    [42, 1, true],
+    [50, 20, true],
+    [21, 8, true],
+    [85, 8, true],
+    [87, 8, true],
+    [84, 8, true],
+    [86, 8, true],
+    [36, 8, true],
+    [37, 8, true],
+    [49, 11, true],
+    [125, 16, true],
+    [127, 4, true],
+    [124, 1, true],
+    [36, 19, true],
+    [39, 5, true],
+    [62, 8, true],
+    [63, 8, true],
+    [34, 18, true],
+    [35, 18, true],
+    [86, 11, true],
+    [84, 11, true],
+    [85, 11, true],
+    [47, 24, true],
+    [108, 14, true],
+    [33, 17, true],
+    [28, 8, true],
+    [62, 19, true],
+    [63, 19, true],
+    [49, 14, true],
+    [81, 6, true],
+    [52, 15, true],
+    [53, 15, true],
+    [65, 20, true],
+    [42, 7, true],
+    [40, 27, true],
+    [39, 26, true],
+    [118, 20, true],
+    [50, 8, true],
+    [51, 8, true],
+    [27, 18, true],
+    [113, 19, true],
+    [62, 11, true],
+    [63, 11, true],
+    [84, 14, true],
+    [86, 14, true],
+    [56, 22, true],
+    [57, 22, true],
+    [22, 8, true],
+    [123, 3, true],
+    [88, 8, true],
+    [90, 8, true],
+    [89, 8, true],
+    [91, 8, true],
+    [125, 7, true],
+    [79, 1, true],
+    [78, 1, true],
+    [22, 19, true],
+    [39, 8, true],
+    [38, 8, true],
+    [21, 18, true],
+    [50, 11, true],
+    [51, 11, true],
+    [39, 2, true],
+    [20, 17, true],
+    [19, 16, true],
+    [109, 6, true],
+    [24, 21, true],
+    [78, 4, true],
+    [23, 20, true],
+    [107, 13, true],
+    [16, 8, true],
+    [65, 8, true],
+    [67, 8, true],
+    [64, 8, true],
+    [66, 8, true],
+    [89, 11, true],
+    [91, 11, true],
+    [88, 11, true],
+    [90, 11, true],
+    [34, 17, true],
+    [47, 23, true],
+    [29, 8, true],
+    [65, 19, true],
+    [64, 19, true],
+    [54, 15, true],
+    [55, 15, true],
+    [125, 9, true],
+    [42, 3, true],
+    [38, 25, true],
+    [53, 8, true],
+    [52, 8, true],
+    [119, 19, true],
+    [116, 19, true],
+    [64, 11, true],
+    [66, 11, true],
+    [65, 11, true],
+    [67, 11, true],
+    [37, 24, true],
+    [88, 14, true],
+    [112, 18, true],
+    [115, 18, true],
+    [15, 10, true],
+    [111, 17, true],
+    [82, 13, true],
+    [44, 28, true],
+    [59, 22, true],
+    [58, 22, true],
+    [78, 7, true],
+    [125, 12, true],
+    [23, 8, true],
+    [126, 3, true],
+    [93, 8, true],
+    [95, 8, true],
+    [92, 8, true],
+    [94, 8, true],
+    [80, 1, true],
+    [81, 1, true],
+    [52, 11, true],
+    [53, 11, true],
+    [0, 7, true],
+    [82, 16, true],
+    [83, 16, true],
+    [18, 15, true],
+    [81, 4, true],
+    [125, 15, true],
+    [17, 8, true],
+    [42, 5, true],
+    [70, 8, true],
+    [68, 8, true],
+    [69, 8, true],
+    [71, 8, true],
+    [92, 11, true],
+    [94, 11, true],
+    [93, 11, true],
+    [95, 11, true],
+    [30, 8, true],
+    [123, 2, true],
+    [49, 13, true],
+    [110, 16, true],
+    [45, 27, true],
+    [110, 4, true],
+    [111, 4, true],
+    [78, 3, true],
+    [54, 8, true],
+    [55, 8, true],
+    [120, 19, true],
+    [122, 19, true],
+    [121, 19, true],
+    [123, 19, true],
+    [69, 11, true],
+    [71, 11, true],
+    [68, 11, true],
+    [70, 11, true],
+    [116, 18, true],
+    [28, 17, true],
+    [36, 23, true],
+    [39, 6, true],
+    [115, 17, true],
+    [114, 17, true],
+    [35, 22, true],
+    [84, 13, true],
+    [86, 13, true],
+    [96, 8, true],
+    [98, 8, true],
+    [97, 8, true],
+    [99, 8, true],
+    [60, 22, true],
+    [61, 22, true],
+    [81, 7, true],
+    [24, 8, true],
+    [55, 19, true],
+    [25, 20, true],
+    [17, 14, true],
+    [42, 8, true],
+    [43, 8, true],
+    [55, 11, true],
+    [54, 11, true],
+    [42, 2, true],
+    [84, 16, true],
+    [48, 22, true],
+    [106, 12, true],
+    [18, 8, true],
+    [72, 8, true],
+    [74, 8, true],
+    [75, 8, true],
+    [73, 8, true],
+    [97, 11, true],
+    [99, 11, true],
+    [96, 11, true],
+    [98, 11, true],
+    [31, 8, true],
+    [78, 5, true],
+    [125, 8, true],
+    [125, 2, true],
+    [109, 7, true],
+    [88, 13, true],
+    [114, 16, true],
+    [15, 9, true],
+    [34, 21, true],
+    [113, 4, true],
+    [115, 4, true],
+    [114, 4, true],
+    [112, 4, true],
+    [33, 20, true],
+    [82, 12, true],
+    [81, 3, true],
+    [56, 8, true],
+    [57, 8, true],
+    [125, 19, true],
+    [124, 19, true],
+    [72, 11, true],
+    [74, 11, true],
+    [73, 11, true],
+    [75, 11, true],
+    [103, 8, true],
+    [101, 8, true],
+    [100, 8, true],
+    [102, 8, true],
+    [55, 18, true],
+    [125, 11, true],
+    [62, 22, true],
+    [63, 22, true],
+    [25, 8, true],
+    [56, 19, true],
+    [57, 19, true],
+    [82, 15, true],
+    [44, 8, true],
+    [45, 8, true],
+    [56, 11, true],
+    [57, 11, true],
+    [16, 13, true],
+    [15, 12, true],
+    [39, 4, true],
+    [48, 21, true],
+    [39, 1, true],
+    [19, 8, true],
+    [77, 8, true],
+    [76, 8, true],
+    [78, 8, true],
+    [100, 11, true],
+    [102, 11, true],
+    [101, 11, true],
+    [103, 11, true],
+    [125, 14, true],
+    [78, 2, true]
+  ]);
+};
 
 // build/dev/javascript/tekspes/tekspes_ffi.mjs
 var getAttributeFromEventTarget = (event2, attribute2) => {
@@ -4655,7 +5294,21 @@ function for$(amount, callback) {
   return do_for(callback, amount, toList([]));
 }
 function init2(_) {
-  return [new Model2(from_list(toList([]))), none()];
+  return [
+    new Model2(
+      (() => {
+        let _pipe = map(
+          positions(),
+          (a) => {
+            debug(a);
+            return [[a[0], a[1]], a[2]];
+          }
+        );
+        return from_list(_pipe);
+      })()
+    ),
+    none()
+  ];
 }
 function update(model, msg) {
   if (msg instanceof ToggleCollision) {
@@ -4717,7 +5370,7 @@ function view(model) {
                     class$(
                       doTwMerge(
                         toList([
-                          "size-4 opacity-0 hover:opacity-50 bg-blue-500",
+                          "size-4 opacity-0",
                           (() => {
                             let $ = is_collision_toggled(
                               model.collisions,
@@ -4726,7 +5379,7 @@ function view(model) {
                             if ($) {
                               return "bg-red-100 opacity-80";
                             } else {
-                              return "";
+                              return "bg-blue-500 hover:opacity-50";
                             }
                           })()
                         ])
@@ -4749,31 +5402,8 @@ function view(model) {
                                 toList([])
                               ),
                               (y2) => {
-                                let $ = parse(x2);
-                                if (!$.isOk()) {
-                                  throw makeError(
-                                    "assignment_no_match",
-                                    "tekspes",
-                                    125,
-                                    "",
-                                    "Assignment pattern did not match",
-                                    { value: $ }
-                                  );
-                                }
-                                let x$1 = $[0];
-                                let $1 = parse(y2);
-                                if (!$1.isOk()) {
-                                  throw makeError(
-                                    "assignment_no_match",
-                                    "tekspes",
-                                    126,
-                                    "",
-                                    "Assignment pattern did not match",
-                                    { value: $1 }
-                                  );
-                                }
-                                let y$1 = $1[0];
-                                return new Ok(new ToggleCollision([x$1, y$1]));
+                                debug(x2 + ", " + y2);
+                                return new Error(toList([]));
                               }
                             );
                           }
@@ -4788,6 +5418,18 @@ function view(model) {
           )
         ])
       ),
+      button(
+        toList([
+          on2(
+            "click",
+            (_) => {
+              do_astar(map_to_list(model.collisions), [0, 0], [0, 1]);
+              return new Error(toList([]));
+            }
+          )
+        ]),
+        toList([text2("wad")])
+      ),
       text2(getCollisionsAsList(map_to_list(model.collisions)))
     ])
   );
@@ -4797,11 +5439,11 @@ function main() {
   let $ = start2(app, "#app", void 0);
   if (!$.isOk()) {
     throw makeError(
-      "assignment_no_match",
+      "let_assert",
       "tekspes",
-      32,
+      39,
       "main",
-      "Assignment pattern did not match",
+      "Pattern match failed, no pattern matched the value.",
       { value: $ }
     );
   }

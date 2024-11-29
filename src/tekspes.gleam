@@ -16,6 +16,13 @@ import lustre/event
 @external(javascript, "./collisions.mjs", "positions")
 fn positions() -> List(#(Int, Int, Bool))
 
+@external(javascript, "./astar.mjs", "do_astar")
+fn astar(
+  grid: List(#(#(Int, Int), Bool)),
+  start: #(Int, Int),
+  end: #(Int, Int),
+) -> List(#(Int, Int))
+
 fn for(amount: Int, callback: fn(Int) -> a) {
   do_for(callback, amount, [])
 }
@@ -109,10 +116,10 @@ pub fn view(model: Model) -> element.Element(Msg) {
             [
               attribute.class(
                 tw_merge([
-                  "size-4 opacity-0 hover:opacity-50 bg-blue-500",
+                  "size-4 opacity-0",
                   case is_collision_toggled(model.collisions, #(x, y)) {
                     True -> "bg-red-100 opacity-80"
-                    False -> ""
+                    False -> "bg-blue-500 hover:opacity-50"
                   },
                 ]),
               ),
@@ -131,11 +138,15 @@ pub fn view(model: Model) -> element.Element(Msg) {
                     [],
                   ),
                 )
-                let assert Ok(x) = int.parse(x)
-                let assert Ok(y) = int.parse(y)
+                // let assert Ok(x) = int.parse(x)
+                // let assert Ok(y) = int.parse(y)
 
-                Ok(ToggleCollision(#(x, y)))
+                io.debug(x <> ", " <> y)
+
+                Error([])
               }),
+              //   Ok(ToggleCollision(#(x, y)))
+            // }),
             ],
             [],
           )
@@ -143,6 +154,15 @@ pub fn view(model: Model) -> element.Element(Msg) {
         // [],
       ),
     ]),
+    html.button(
+      [
+        event.on("click", fn(_) {
+          astar(dict.to_list(model.collisions), #(0, 0), #(0, 1))
+          Error([])
+        }),
+      ],
+      [html.text("wad")],
+    ),
     html.text(get_collisions_as_string(dict.to_list(model.collisions))),
   ])
   // html.div([], [])
