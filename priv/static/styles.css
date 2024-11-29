@@ -1,0 +1,4 @@
+input {
+    /* @apply border border-zinc-500; */
+    border: 1px solid #71717a;
+}
